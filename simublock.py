@@ -7,6 +7,20 @@ event_bus = queue.Queue()
 def emit(msg):
     event_bus.put(msg)
 
+from flask import request, jsonify
+
+pending_ops = []
+
+class Operation:
+    def __init__(self, user, action, data):
+        self.user = user
+        self.action = action
+        self.data = data
+
+    def __repr__(self):
+        return f"{self.user} | {self.action} | {self.data}"
+
+
 # ---------------- CORE ----------------
 
 class Transaction:
@@ -50,41 +64,83 @@ def mine(b,d=2):
 def run_sim():
     bc = Blockchain()
     emit("Simulation started")
-    while len(bc.chain) < 12:
-        tx = Transaction("Alice","Bob",random.randint(1,3))
-        emit(f"TX created {tx}")
-        b = Block(len(bc.chain), bc.last().h, [tx])
-        emit("Mining...")
-        mine(b,2)
+
+    while len(bc.chain) < 50:
+        if not pending_ops:
+            time.sleep(0.5)
+            continue
+
+        op = pending_ops.pop(0)
+        emit(f"Mining block for: {op}")
+
+        b = Block(len(bc.chain), bc.last().h, [op])
+        mine(b, 2)
         bc.add(b)
-        time.sleep(0.3)
 
 # ---------------- WEB ----------------
 
+@app.route("/")
 @app.route("/")
 def index():
     return """
 <!DOCTYPE html>
 <html>
-<body style="background:#0f0f14;color:#e0e0ff;font-family:monospace">
-<h2>SimuBlock Live</h2>
+<head>
+<title>SimuBlock Live</title>
+<style>
+body { background:#0f0f14; color:#e0e0ff; font-family:monospace; }
+#feed { height:60vh; overflow:auto; border:1px solid #333; padding:8px; }
+form { margin-top:10px; }
+input { background:#111; color:#fff; border:1px solid #444; padding:4px; }
+button { background:#7aa2ff; border:none; padding:6px 10px; cursor:pointer; }
+</style>
+</head>
+<body>
+<h2>SimuBlock – Non-Financial Blockchain</h2>
 <div id="status">Connecting...</div>
+
 <div id="feed"></div>
+
+<form id="opForm">
+  <input id="user" placeholder="User" required />
+  <input id="action" placeholder="Action" required />
+  <input id="data" placeholder="Data" required />
+  <button type="submit">Submit Operation</button>
+</form>
+
 <script>
-let s=document.getElementById("status");
-let f=document.getElementById("feed");
-let es=new EventSource("/stream");
-es.onopen=()=>s.textContent="Connected";
-es.onerror=()=>s.textContent="Connection error";
-es.onmessage=e=>{
-  let d=document.createElement("div");
-  d.textContent=e.data;
-  f.prepend(d);
+const status = document.getElementById("status");
+const feed = document.getElementById("feed");
+
+const es = new EventSource("/stream");
+es.onopen = () => status.textContent = "Connected to SimuBlock";
+es.onerror = () => status.textContent = "Connection error";
+es.onmessage = e => {
+  const d = document.createElement("div");
+  d.textContent = e.data;
+  feed.prepend(d);
+};
+
+document.getElementById("opForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const user = document.getElementById("user").value;
+  const action = document.getElementById("action").value;
+  const data = document.getElementById("data").value;
+
+  await fetch("/op", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({user, action, data})
+  });
+
+  document.getElementById("action").value = "";
+  document.getElementById("data").value = "";
 };
 </script>
 </body>
 </html>
 """
+
 
 @app.route("/stream")
 def stream():
@@ -100,6 +156,19 @@ def stream():
             except:
                 yield "data: .\n\n"
     return Response(gen(), mimetype="text/event-stream")
+
+@app.route("/op", methods=["POST"])
+def submit_op():
+    payload = request.json or {}
+    op = Operation(
+        payload.get("user", "anonymous"),
+        payload.get("action", "unknown"),
+        payload.get("data", "")
+    )
+    pending_ops.append(op)
+    emit(f"OP received: {op}")
+    return jsonify({"status": "queued"})
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT",10000))
