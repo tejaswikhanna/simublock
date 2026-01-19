@@ -170,14 +170,17 @@ es.onmessage = e => {
 @app.route("/stream")
 def stream():
     def gen():
+        emit("SimuBlock Live — Connected")
+        # Start simulation on first client
+        if not getattr(app, "started", False):
+            app.started = True
+            threading.Thread(target=run_sim, daemon=True).start()
+
         while True:
-            msg = event_bus.get()
-            yield f"data: {msg}\\n\\n"
+            try:
+                msg = event_bus.get(timeout=1)
+                yield f"data: {msg}\n\n"
+            except:
+                # heartbeat to keep connection alive
+                yield "data: .\n\n"
     return Response(gen(), mimetype="text/event-stream")
-
-# ----------------- ENTRY -----------------
-
-if __name__ == "__main__":
-    start_simulation()
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, threaded=True)
