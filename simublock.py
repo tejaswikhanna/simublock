@@ -1,6 +1,14 @@
-import hashlib, time, random, threading, os
+import hashlib, time, random, threading, os, queue
+from flask import Flask, Response
 
-# ---------- CORE ----------
+# ----------------- EVENT BUS -----------------
+
+event_bus = queue.Queue()
+
+def emit(event):
+    event_bus.put(event)
+
+# ----------------- CORE -----------------
 
 class Transaction:
     def __init__(self, sender, receiver, amount):
@@ -9,7 +17,7 @@ class Transaction:
         self.amount = amount
 
     def __repr__(self):
-        return f"{self.sender}->{self.receiver}:{self.amount}"
+        return f"{self.sender} → {self.receiver} : {self.amount}"
 
 
 class Block:
@@ -41,6 +49,7 @@ class Blockchain:
         if block.prev_hash == self.last().hash:
             self.apply(block)
             self.chain.append(block)
+            emit(f"BLOCK #{block.index} added | hash {block.hash[:12]}...")
             return True
         return False
 
@@ -49,9 +58,9 @@ class Blockchain:
             if self.state.get(tx.sender, 0) >= tx.amount:
                 self.state[tx.sender] -= tx.amount
                 self.state[tx.receiver] = self.state.get(tx.receiver, 0) + tx.amount
+                emit(f"TX confirmed: {tx}")
 
-
-# ---------- CONSENSUS ----------
+# ----------------- CONSENSUS -----------------
 
 def mine(block, difficulty):
     while not block.hash.startswith("0" * difficulty):
@@ -59,8 +68,7 @@ def mine(block, difficulty):
         block.hash = block.compute_hash()
     return block
 
-
-# ---------- NETWORK / NODE ----------
+# ----------------- NODE -----------------
 
 class Node:
     def __init__(self, nid, network, selfish=False):
@@ -71,73 +79,105 @@ class Node:
         self.private_chain = []
 
     def create_tx(self):
-        return Transaction("Alice", "Bob", random.randint(1, 5))
+        tx = Transaction("Alice", "Bob", random.randint(1, 5))
+        emit(f"TX created: {tx}")
+        return tx
 
     def mine_loop(self):
-        while len(self.bc.chain) < 15:
+        while len(self.bc.chain) < 20:
             txs = [self.create_tx()]
             b = Block(len(self.bc.chain), self.bc.last().hash, txs)
+            emit(f"Node {self.id} mining block {b.index}")
             b = mine(b, difficulty=3)
+            emit(f"Node {self.id} mined block {b.index}")
 
             if self.selfish:
                 self.private_chain.append(b)
                 if len(self.private_chain) >= 2:
                     for pb in self.private_chain:
-                        self.network.broadcast(pb, self)
+                        self.network.broadcast(pb)
                     self.private_chain.clear()
             else:
-                self.network.broadcast(b, self)
+                self.network.broadcast(b)
 
+# ----------------- NETWORK -----------------
 
 class Network:
-    def __init__(self, delay=(0.05, 0.2)):
+    def __init__(self, delay=(0.1, 0.3)):
         self.nodes = []
         self.delay = delay
-        self.block_times = []
 
     def add(self, n):
         self.nodes.append(n)
 
-    def broadcast(self, block, sender):
-        t0 = time.time()
+    def broadcast(self, block):
         for n in self.nodes:
             time.sleep(random.uniform(*self.delay))
             n.bc.add_block(block)
-        self.block_times.append(time.time() - t0)
 
+# ----------------- SIMULATION -----------------
 
-# ---------- EXPERIMENT ----------
-
-def run():
+def start_simulation():
     net = Network()
     nodes = [
         Node(0, net),
         Node(1, net),
-        Node(2, net, selfish=True)  # attacker
+        Node(2, net, selfish=True)
     ]
     for n in nodes:
         net.add(n)
 
     threads = []
     for n in nodes:
-        t = threading.Thread(target=n.mine_loop)
+        t = threading.Thread(target=n.mine_loop, daemon=True)
         t.start()
         threads.append(t)
 
-    for t in threads:
-        t.join()
+# ----------------- WEB LAYER -----------------
 
-    avg_block_time = sum(net.block_times) / len(net.block_times)
-    tps = (len(nodes[0].bc.chain) * 1) / sum(net.block_times)
+app = Flask(__name__)
 
-    print("\nFinal chain length:", len(nodes[0].bc.chain))
-    print("State:", nodes[0].bc.state)
-    print("Avg block propagation time:", round(avg_block_time, 3), "s")
-    print("Approx TPS:", round(tps, 2))
+@app.route("/")
+def index():
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+<title>SimuBlock Live</title>
+<style>
+body { font-family: monospace; background:#0f0f14; color:#e0e0ff; }
+h2 { color:#7aa2ff; }
+#feed { height:80vh; overflow:auto; border:1px solid #333; padding:10px; }
+</style>
+</head>
+<body>
+<h2>SimuBlock – Live Blockchain</h2>
+<div id="feed"></div>
 
+<script>
+const feed = document.getElementById("feed");
+const es = new EventSource("/stream");
+es.onmessage = e => {
+  const d = document.createElement("div");
+  d.textContent = e.data;
+  feed.prepend(d);
+};
+</script>
+</body>
+</html>
+"""
+
+@app.route("/stream")
+def stream():
+    def gen():
+        while True:
+            msg = event_bus.get()
+            yield f"data: {msg}\\n\\n"
+    return Response(gen(), mimetype="text/event-stream")
+
+# ----------------- ENTRY -----------------
 
 if __name__ == "__main__":
-    runs = int(os.getenv("RUNS", "1"))
-    for i in range(runs):
-        print(f"\n--- SimuBlock Experiment {i+1} ---")
-        run()
+    start_simulation()
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, threaded=True)
