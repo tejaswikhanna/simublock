@@ -11,6 +11,8 @@ from flask import request, jsonify
 
 pending_ops = []
 
+# ---------------- CORE ----------------
+
 class Operation:
     def __init__(self, user, action, data):
         self.user = user
@@ -20,40 +22,32 @@ class Operation:
     def __repr__(self):
         return f"{self.user} | {self.action} | {self.data}"
 
-
-# ---------------- CORE ----------------
-
-class Transaction:
-    def __init__(self, s, r, a):
-        self.s, self.r, self.a = s, r, a
-    def __repr__(self):
-        return f"{self.s}→{self.r}:{self.a}"
-
 class Block:
-    def __init__(self, i, prev, txs):
+    def __init__(self, i, prev, ops):
         self.i = i
         self.prev = prev
-        self.txs = txs
+        self.ops = ops   # operations, not transactions
         self.nonce = 0
         self.ts = time.time()
         self.h = self.hash()
+
     def hash(self):
-        return hashlib.sha256(f"{self.i}{self.prev}{self.txs}{self.nonce}{self.ts}".encode()).hexdigest()
+        return hashlib.sha256(
+            f"{self.i}{self.prev}{self.ops}{self.nonce}{self.ts}".encode()
+        ).hexdigest()
 
 class Blockchain:
     def __init__(self):
-        self.chain = [Block(0,"0",[])]
-        self.state = {"Alice":50,"Bob":50}
-    def last(self): return self.chain[-1]
-    def add(self,b):
-        if b.prev == self.last().h:
-            for tx in b.txs:
-                if self.state[tx.s] >= tx.a:
-                    self.state[tx.s] -= tx.a
-                    self.state[tx.r] += tx.a
-                    emit(f"TX confirmed {tx}")
-            self.chain.append(b)
-            emit(f"BLOCK {b.i} {b.h[:10]}")
+        self.chain = [Block(0, "0", [])]
+
+    def last(self):
+        return self.chain[-1]
+
+    def add(self, block):
+        if block.prev == self.last().h:
+            self.chain.append(block)
+            emit(f"BLOCK {block.i} committed")
+
 
 def mine(b,d=2):
     while not b.h.startswith("0"*d):
