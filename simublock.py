@@ -1,8 +1,24 @@
 import hashlib, time, random, threading, queue, os
 from flask import Flask, Response
 
+import csv
+
 app = Flask(__name__)
 event_bus = queue.Queue()
+
+EXPERIMENT = {
+    "difficulty": 2,
+    "max_blocks": 50,
+    "op_interval": 0.0,      # seconds between ops
+    "run_id": int(time.time())
+}
+
+metrics = {
+    "block_times": [],
+    "ops_committed": 0,
+    "start_time": None
+}
+
 
 chain_running = False
 
@@ -60,24 +76,27 @@ def mine(b,d=2):
 def run_sim():
     global chain_running
     bc = Blockchain()
-    app.blockchain = bc   # expose for explorer
+    app.blockchain = bc
+
+    metrics["start_time"] = time.time()
     emit("Simulation initialized")
 
-    while True:
-        if not chain_running:
-            time.sleep(0.5)
+    while len(bc.chain) < EXPERIMENT["max_blocks"]:
+        if not chain_running or not pending_ops:
+            time.sleep(0.2)
             continue
 
-        if not pending_ops:
-            time.sleep(0.5)
-            continue
+        t0 = time.time()
 
         op = pending_ops.pop(0)
         emit(f"Mining block for: {op}")
 
         b = Block(len(bc.chain), bc.last().h, [op])
-        mine(b, 2)
+        mine(b, EXPERIMENT["difficulty"])
         bc.add(b)
+
+        metrics["block_times"].append(time.time() - t0)
+        metrics["ops_committed"] += 1
 
 # ---------------- WEB ----------------
 
@@ -103,6 +122,8 @@ button { background:#7aa2ff; border:none; padding:6px 10px; cursor:pointer; }
 <button onclick="fetch('/start',{method:'POST'})">▶ Start</button>
 <button onclick="fetch('/stop',{method:'POST'})">⏸ Stop</button>
 <button onclick="loadChain()">🔍 Refresh Explorer</button>
+<button onclick="loadMetrics()">📊 Metrics</button>
+<pre id="metrics"></pre>
 
 <div id="status">Connecting...</div>
 
@@ -151,6 +172,12 @@ async function loadChain(){
   const res = await fetch("/chain");
   const data = await res.json();
   explorer.textContent = JSON.stringify(data, null, 2);
+}
+
+async function loadMetrics(){
+  const r = await fetch("/metrics");
+  document.getElementById("metrics").textContent =
+    JSON.stringify(await r.json(), null, 2);
 }
 </script>
 
@@ -218,6 +245,32 @@ def chain_view():
             for b in bc.chain
         ]
     }
+
+@app.route("/metrics")
+def get_metrics():
+    duration = time.time() - metrics["start_time"] if metrics["start_time"] else 0
+    avg_block_time = (
+        sum(metrics["block_times"]) / len(metrics["block_times"])
+        if metrics["block_times"] else 0
+    )
+
+    return {
+        "run_id": EXPERIMENT["run_id"],
+        "difficulty": EXPERIMENT["difficulty"],
+        "blocks": len(metrics["block_times"]),
+        "ops_committed": metrics["ops_committed"],
+        "avg_block_time": avg_block_time,
+        "runtime_sec": duration
+    }
+
+@app.route("/metrics.csv")
+def metrics_csv():
+    def gen():
+        yield "block_index,block_time\n"
+        for i, t in enumerate(metrics["block_times"]):
+            yield f"{i},{t}\n"
+
+    return Response(gen(), mimetype="text/csv")
 
 
 
