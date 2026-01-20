@@ -1,20 +1,14 @@
 import hashlib, time, random, threading, queue, os
 from flask import Flask, Response
+from config import EXPERIMENT
+from core.block import Block, Operation
+from core.blockchain import Blockchain
 
 import csv
 
 app = Flask(__name__)
 event_bus = queue.Queue()
 mine_event = threading.Event()
-
-
-EXPERIMENT = {
-    "difficulty": 2,
-    "max_blocks": 50,
-    "block_capacity": 5,     #ops per block
-    "op_interval": 0.0,      # seconds between ops
-    "run_id": int(time.time())
-}
 
 metrics = {
     "block_times": [],
@@ -33,42 +27,6 @@ from flask import request, jsonify
 pending_ops = []
 
 # ---------------- CORE ----------------
-
-class Operation:
-    def __init__(self, user, action, data):
-        self.user = user
-        self.action = action
-        self.data = data
-
-    def __repr__(self):
-        return f"{self.user} | {self.action} | {self.data}"
-
-class Block:
-    def __init__(self, i, prev, ops):
-        self.i = i
-        self.prev = prev
-        self.ops = ops   # operations, not transactions
-        self.nonce = 0
-        self.ts = time.time()
-        self.h = self.hash()
-
-    def hash(self):
-        return hashlib.sha256(
-            f"{self.i}{self.prev}{self.ops}{self.nonce}{self.ts}".encode()
-        ).hexdigest()
-
-class Blockchain:
-    def __init__(self):
-        self.chain = [Block(0, "0", [])]
-
-    def last(self):
-        return self.chain[-1]
-
-    def add(self, block):
-        if block.prev == self.last().h:
-            self.chain.append(block)
-            emit(f"BLOCK {block.i} committed")
-
 
 def mine(b,d=2):
     while not b.h.startswith("0"*d):
