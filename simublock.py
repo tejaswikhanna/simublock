@@ -5,6 +5,7 @@ import csv
 
 app = Flask(__name__)
 event_bus = queue.Queue()
+mine_once = False
 
 EXPERIMENT = {
     "difficulty": 2,
@@ -75,61 +76,45 @@ def mine(b,d=2):
     return b
 
 def run_sim():
-    global chain_running
+    global chain_running, mine_once
 
-    # Initialize blockchain
     bc = Blockchain()
-    app.blockchain = bc   # expose for explorer & metrics
-
+    app.blockchain = bc
     metrics["start_time"] = time.time()
     emit("Simulation initialized")
 
-    # Main simulation loop
     while len(bc.chain) < EXPERIMENT["max_blocks"]:
 
-        # Governance: paused
         if not chain_running:
             time.sleep(0.3)
             continue
 
-        # No operations to process
-        if not pending_ops:
-            time.sleep(0.3)
+        # ⬅ NEW: wait for mining trigger
+        if not mine_once:
+            time.sleep(0.2)
             continue
 
-        # -------------------------------
-        # 1. Batch operations
-        # -------------------------------
+        if not pending_ops:
+            emit("No operations to mine")
+            mine_once = False
+            continue
+
+        # Batch operations
         ops = []
         while pending_ops and len(ops) < EXPERIMENT["block_capacity"]:
             ops.append(pending_ops.pop(0))
 
-        # -------------------------------
-        # 2. Observability event
-        # -------------------------------
         emit(f"Mining block with {len(ops)} operations")
 
-        # -------------------------------
-        # 3. Create & mine block
-        # -------------------------------
         t0 = time.time()
-
-        block = Block(
-            len(bc.chain),
-            bc.last().h,
-            ops
-        )
-
+        block = Block(len(bc.chain), bc.last().h, ops)
         mine(block, EXPERIMENT["difficulty"])
         bc.add(block)
 
-        # -------------------------------
-        # 4. Metrics update
-        # -------------------------------
         metrics["block_times"].append(time.time() - t0)
         metrics["ops_committed"] += len(ops)
 
-    emit("Simulation completed")
+        mine_once = False   # ⬅ reset after one block
 
 
 # ---------------- WEB ----------------
@@ -164,13 +149,16 @@ button { background:#7aa2ff; border:none; padding:6px 10px; cursor:pointer; }
 <h3>Live Feed</h3>
 <div id="feed" style="height:40vh;overflow:auto;border:1px solid #333"></div>
 
-<h3>Submit Operation</h3>
+<h3>Operations</h3>
 <form id="opForm">
   <input id="user" placeholder="User" required />
   <input id="action" placeholder="Action" required />
   <input id="data" placeholder="Data" required />
-  <button type="submit">Submit</button>
+  <button type="submit">Submit Operation</button>
 </form>
+
+<button onclick="triggerMine()">⛏ Mine Block</button>
+
 
 <h3>Block Explorer</h3>
 <pre id="explorer" style="background:#111;padding:8px;height:30vh;overflow:auto"></pre>
@@ -213,6 +201,24 @@ async function loadMetrics(){
   document.getElementById("metrics").textContent =
     JSON.stringify(await r.json(), null, 2);
 }
+
+document.getElementById("opForm").onsubmit = async e => {
+  e.preventDefault();
+  await fetch("/op", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      user:user.value,
+      action:action.value,
+      data:data.value
+    })
+  });
+};
+
+function triggerMine(){
+  fetch("/mine", {method:"POST"});
+}
+
 </script>
 
 </body>
@@ -305,6 +311,14 @@ def metrics_csv():
             yield f"{i},{t}\n"
 
     return Response(gen(), mimetype="text/csv")
+
+@app.route("/mine", methods=["POST"])
+def mine_block():
+    global mine_once
+    mine_once = True
+    emit("Mining triggered by user")
+    return {"status": "mining"}
+
 
 
 
