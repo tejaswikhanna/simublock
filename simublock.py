@@ -9,6 +9,7 @@ event_bus = queue.Queue()
 EXPERIMENT = {
     "difficulty": 2,
     "max_blocks": 50,
+    "block_capacity": 5,     #ops per block
     "op_interval": 0.0,      # seconds between ops
     "run_id": int(time.time())
 }
@@ -75,28 +76,61 @@ def mine(b,d=2):
 
 def run_sim():
     global chain_running
+
+    # Initialize blockchain
     bc = Blockchain()
-    app.blockchain = bc
+    app.blockchain = bc   # expose for explorer & metrics
 
     metrics["start_time"] = time.time()
     emit("Simulation initialized")
 
+    # Main simulation loop
     while len(bc.chain) < EXPERIMENT["max_blocks"]:
-        if not chain_running or not pending_ops:
-            time.sleep(0.2)
+
+        # Governance: paused
+        if not chain_running:
+            time.sleep(0.3)
             continue
 
+        # No operations to process
+        if not pending_ops:
+            time.sleep(0.3)
+            continue
+
+        # -------------------------------
+        # 1. Batch operations
+        # -------------------------------
+        ops = []
+        while pending_ops and len(ops) < EXPERIMENT["block_capacity"]:
+            ops.append(pending_ops.pop(0))
+
+        # -------------------------------
+        # 2. Observability event
+        # -------------------------------
+        emit(f"Mining block with {len(ops)} operations")
+
+        # -------------------------------
+        # 3. Create & mine block
+        # -------------------------------
         t0 = time.time()
 
-        op = pending_ops.pop(0)
-        emit(f"Mining block for: {op}")
+        block = Block(
+            len(bc.chain),
+            bc.last().h,
+            ops
+        )
 
-        b = Block(len(bc.chain), bc.last().h, [op])
-        mine(b, EXPERIMENT["difficulty"])
-        bc.add(b)
+        mine(block, EXPERIMENT["difficulty"])
+        bc.add(block)
 
+        # -------------------------------
+        # 4. Metrics update
+        # -------------------------------
         metrics["block_times"].append(time.time() - t0)
-        metrics["ops_committed"] += 1
+        metrics["ops_committed"] += len(ops)
+
+    emit("Simulation completed")
+
 
 # ---------------- WEB ----------------
 
