@@ -5,7 +5,8 @@ import csv
 
 app = Flask(__name__)
 event_bus = queue.Queue()
-mine_once = False
+mine_event = threading.Event()
+
 
 EXPERIMENT = {
     "difficulty": 2,
@@ -76,7 +77,7 @@ def mine(b,d=2):
     return b
 
 def run_sim():
-    global chain_running, mine_once
+    global chain_running
 
     bc = Blockchain()
     app.blockchain = bc
@@ -85,21 +86,23 @@ def run_sim():
 
     while len(bc.chain) < EXPERIMENT["max_blocks"]:
 
+        # Governance pause
         if not chain_running:
-            time.sleep(0.3)
-            continue
-
-        # ⬅ NEW: wait for mining trigger
-        if not mine_once:
             time.sleep(0.2)
             continue
 
+        # ⛔ WAIT for explicit mining trigger
+        mine_event.wait()
+
+        # If no ops, consume trigger and do nothing
         if not pending_ops:
             emit("No operations to mine")
-            mine_once = False
+            mine_event.clear()
             continue
 
+        # -------------------------
         # Batch operations
+        # -------------------------
         ops = []
         while pending_ops and len(ops) < EXPERIMENT["block_capacity"]:
             ops.append(pending_ops.pop(0))
@@ -114,7 +117,10 @@ def run_sim():
         metrics["block_times"].append(time.time() - t0)
         metrics["ops_committed"] += len(ops)
 
-        mine_once = False   # ⬅ reset after one block
+        # ⛔ consume the trigger
+        mine_event.clear()
+
+    emit("Simulation completed")
 
 
 # ---------------- WEB ----------------
@@ -314,10 +320,10 @@ def metrics_csv():
 
 @app.route("/mine", methods=["POST"])
 def mine_block():
-    global mine_once
-    mine_once = True
+    mine_event.set()
     emit("Mining triggered by user")
-    return {"status": "mining"}
+    return {"status": "mining triggered"}
+
 
 
 
