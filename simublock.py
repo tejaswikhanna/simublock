@@ -1,14 +1,16 @@
 import hashlib, time, random, threading, queue, os
+import threading
 from flask import Flask, Response
 from config import EXPERIMENT
 from core.block import Block, Operation
 from core.blockchain import Blockchain
+from sim.engine import mine_event, chain_running, start_sim
 
 import csv
 
 app = Flask(__name__)
 event_bus = queue.Queue()
-mine_event = threading.Event()
+
 
 metrics = {
     "block_times": [],
@@ -16,8 +18,6 @@ metrics = {
     "start_time": None
 }
 
-
-chain_running = False
 
 def emit(msg):
     event_bus.put(msg)
@@ -33,53 +33,6 @@ def mine(b,d=2):
         b.nonce+=1
         b.h=b.hash()
     return b
-
-def run_sim():
-    global chain_running
-
-    bc = Blockchain()
-    app.blockchain = bc
-    metrics["start_time"] = time.time()
-    emit("Simulation initialized")
-
-    while len(bc.chain) < EXPERIMENT["max_blocks"]:
-
-        # Governance pause
-        if not chain_running:
-            time.sleep(0.2)
-            continue
-
-        # ⛔ WAIT for explicit mining trigger
-        mine_event.wait()
-
-        # If no ops, consume trigger and do nothing
-        if not pending_ops:
-            emit("No operations to mine")
-            mine_event.clear()
-            continue
-
-        # -------------------------
-        # Batch operations
-        # -------------------------
-        ops = []
-        while pending_ops and len(ops) < EXPERIMENT["block_capacity"]:
-            ops.append(pending_ops.pop(0))
-
-        emit(f"Mining block with {len(ops)} operations")
-
-        t0 = time.time()
-        block = Block(len(bc.chain), bc.last().h, ops)
-        mine(block, EXPERIMENT["difficulty"])
-        bc.add(block)
-
-        metrics["block_times"].append(time.time() - t0)
-        metrics["ops_committed"] += len(ops)
-
-        # ⛔ consume the trigger
-        mine_event.clear()
-
-    emit("Simulation completed")
-
 
 # ---------------- WEB ----------------
 
@@ -194,16 +147,11 @@ function triggerMine(){
 def stream():
     def gen():
         emit("Client connected")
-        if not getattr(app,"started",False):
-            app.started=True
-            threading.Thread(target=run_sim,daemon=True).start()
         while True:
-            try:
-                m = event_bus.get(timeout=1)
-                yield f"data: {m}\n\n"
-            except:
-                yield "data: .\n\n"
+            msg = event_bus.get()
+            yield f"data: {msg}\n\n"
     return Response(gen(), mimetype="text/event-stream")
+
 
 @app.route("/op", methods=["POST"])
 def submit_op():
@@ -282,7 +230,11 @@ def mine_block():
     emit("Mining triggered by user")
     return {"status": "mining triggered"}
 
-
+threading.Thread(
+    target=start_sim,
+    args=(app, emit, pending_ops, metrics, EXPERIMENT),
+    daemon=True
+).start()
 
 
 
