@@ -6,9 +6,13 @@ from core.block import Block, Operation
 from core.blockchain import Blockchain
 import sim.engine as engine
 from sim.engine import mine_event, start_sim
-
-
 import csv
+
+threading.Thread(
+    target=start_sim,
+    args=(app, emit, pending_ops, metrics, EXPERIMENT),
+    daemon=True
+).start()
 
 app = Flask(__name__)
 event_bus = queue.Queue()
@@ -150,9 +154,13 @@ def stream():
     def gen():
         emit("Client connected")
         while True:
-            msg = event_bus.get()
-            yield f"data: {msg}\n\n"
+            try:
+                msg = event_bus.get(timeout=2)
+                yield f"data: {msg}\n\n"
+            except queue.Empty:
+                yield "data: [heartbeat]\n\n"
     return Response(gen(), mimetype="text/event-stream")
+
 
 
 @app.route("/op", methods=["POST"])
@@ -229,14 +237,6 @@ def mine_block():
     mine_event.set()
     emit("Mining triggered by user")
     return {"status": "mining triggered"}
-
-threading.Thread(
-    target=start_sim,
-    args=(app, emit, pending_ops, metrics, EXPERIMENT),
-    daemon=True
-).start()
-
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT",10000))
