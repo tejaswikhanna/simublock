@@ -12,6 +12,10 @@ def start_sim(app, emit, pending_ops, metrics, EXPERIMENT):
     metrics["start_time"] = time.time()
     emit("Simulation initialized")
 
+    emit("Blockchain object attached to app")
+    emit(f"ENGINE: chain length = {len(bc.chain)}")
+    emit(f"Genesis block index: {bc.chain[0].i}")
+
     while len(bc.chain) < EXPERIMENT["max_blocks"]:
 
         if not chain_running:

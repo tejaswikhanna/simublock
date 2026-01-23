@@ -4,7 +4,9 @@ from flask import Flask, Response
 from config import EXPERIMENT
 from core.block import Block, Operation
 from core.blockchain import Blockchain
-from sim.engine import mine_event, chain_running, start_sim
+import sim.engine as engine
+from sim.engine import mine_event, start_sim
+
 
 import csv
 
@@ -167,15 +169,13 @@ def submit_op():
 
 @app.route("/start", methods=["POST"])
 def start_chain():
-    global chain_running
-    chain_running = True
+    engine.chain_running = True
     emit("Blockchain started")
     return {"status": "running"}
 
 @app.route("/stop", methods=["POST"])
 def stop_chain():
-    global chain_running
-    chain_running = False
+    engine.chain_running = False
     emit("Blockchain stopped")
     return {"status": "stopped"}
 
@@ -194,7 +194,7 @@ def chain_view():
                 "timestamp": b.ts,
                 "operations": [str(op) for op in b.ops]
             }
-            for b in bc.chain
+            for b in app.blockchain.chain
         ]
     }
 
