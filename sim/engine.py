@@ -1,4 +1,8 @@
 import threading
+import time
+from core.blockchain import Blockchain
+from core.block import Block
+from core.consensus import get_consensus, mine
 
 mine_event = threading.Event()
 chain_running = False
@@ -44,3 +48,29 @@ def start_sim(app, emit, pending_ops, metrics, EXPERIMENT):
 
         metrics["ops_committed"] += len(ops)
         mine_event.clear()
+
+
+def mine_step(app, emit, pending_ops, metrics, EXPERIMENT):
+    if not hasattr(app, "blockchain"):
+        bc = Blockchain()
+        app.blockchain = bc
+        metrics["start_time"] = time.time()
+        emit("Genesis block created")
+        return
+
+    if not pending_ops:
+        emit("No operations to mine")
+        return
+
+    ops = []
+    while pending_ops and len(ops) < EXPERIMENT["block_capacity"]:
+        ops.append(pending_ops.pop(0))
+
+    emit(f"Mining block with {len(ops)} operations")
+
+    block = Block(len(app.blockchain.chain), app.blockchain.chain[-1].h, ops)
+    mine(block, EXPERIMENT["difficulty"])
+    app.blockchain.chain.append(block)
+
+    metrics["block_times"].append(time.time())
+    metrics["ops_committed"] += len(ops)

@@ -1,11 +1,11 @@
-import hashlib, time, random, threading, queue, os
-import threading
+import hashlib, time, random, queue, os
 from flask import Flask, Response
 from config import EXPERIMENT
 from core.block import Block, Operation
 from core.blockchain import Blockchain
 import sim.engine as engine
 from sim.engine import mine_event, start_sim
+from sim.engine import mine_step
 import csv
 
 engine_started = False
@@ -29,15 +29,8 @@ pending_ops = []
 
 # ---------------- CORE ----------------
 
-def mine(b,d=2):
-    while not b.h.startswith("0"*d):
-        b.nonce+=1
-        b.h=b.hash()
-    return b
-
 # ---------------- WEB ----------------
 
-@app.route("/")
 @app.route("/")
 def index():
     return """
@@ -120,18 +113,7 @@ async function loadMetrics(){
     JSON.stringify(await r.json(), null, 2);
 }
 
-document.getElementById("opForm").onsubmit = async e => {
-  e.preventDefault();
-  await fetch("/op", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      user:user.value,
-      action:action.value,
-      data:data.value
-    })
-  });
-};
+
 
 function triggerMine(){
   fetch("/mine", {method:"POST"});
@@ -242,20 +224,11 @@ def metrics_csv():
 
 @app.route("/mine", methods=["POST"])
 def mine_block():
-    mine_event.set()
+    mine_step(app, emit, pending_ops, metrics, EXPERIMENT)
     emit("Mining triggered by user")
     return {"status": "mining triggered"}
 
-# ---- START SIMULATION ENGINE (Render-safe) ----
-engine_started = False
 
-if not engine_started:
-    engine_started = True
-    threading.Thread(
-        target=start_sim,
-        args=(app, emit, pending_ops, metrics, EXPERIMENT),
-        daemon=True
-    ).start()
 
 
 

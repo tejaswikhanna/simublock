@@ -1,3 +1,6 @@
+import hashlib
+import time
+
 class Operation:
     def __init__(self, user, action, data):
         self.user = user
