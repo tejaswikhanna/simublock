@@ -8,15 +8,16 @@ import sim.engine as engine
 from sim.engine import mine_event, start_sim
 import csv
 
+
+
+app = Flask(__name__)
+event_bus = queue.Queue()
+
 threading.Thread(
     target=start_sim,
     args=(app, emit, pending_ops, metrics, EXPERIMENT),
     daemon=True
 ).start()
-
-app = Flask(__name__)
-event_bus = queue.Queue()
-
 
 metrics = {
     "block_times": [],
@@ -237,6 +238,19 @@ def mine_block():
     mine_event.set()
     emit("Mining triggered by user")
     return {"status": "mining triggered"}
+
+# ---- START SIMULATION ENGINE (Render-safe) ----
+engine_started = False
+
+if not engine_started:
+    engine_started = True
+    threading.Thread(
+        target=start_sim,
+        args=(app, emit, pending_ops, metrics, EXPERIMENT),
+        daemon=True
+    ).start()
+
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT",10000))
