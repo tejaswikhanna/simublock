@@ -8,7 +8,7 @@ import sim.engine as engine
 from sim.engine import mine_event, start_sim
 import csv
 
-
+engine_started = False
 
 app = Flask(__name__)
 event_bus = queue.Queue()
@@ -26,12 +26,6 @@ def emit(msg):
 from flask import request, jsonify
 
 pending_ops = []
-
-threading.Thread(
-    target=start_sim,
-    args=(app, emit, pending_ops, metrics, EXPERIMENT),
-    daemon=True
-).start()
 
 # ---------------- CORE ----------------
 
@@ -153,14 +147,27 @@ function triggerMine(){
 @app.route("/stream")
 def stream():
     def gen():
+        global engine_started
         emit("Client connected")
+
+        if not engine_started:
+            engine_started = True
+            emit("Starting simulation engine")
+            threading.Thread(
+                target=start_sim,
+                args=(app, emit, pending_ops, metrics, EXPERIMENT),
+                daemon=True
+            ).start()
+
         while True:
             try:
                 msg = event_bus.get(timeout=2)
                 yield f"data: {msg}\n\n"
             except queue.Empty:
                 yield "data: [heartbeat]\n\n"
+
     return Response(gen(), mimetype="text/event-stream")
+
 
 
 
