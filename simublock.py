@@ -13,12 +13,6 @@ import csv
 app = Flask(__name__)
 event_bus = queue.Queue()
 
-threading.Thread(
-    target=start_sim,
-    args=(app, emit, pending_ops, metrics, EXPERIMENT),
-    daemon=True
-).start()
-
 metrics = {
     "block_times": [],
     "ops_committed": 0,
@@ -32,6 +26,12 @@ def emit(msg):
 from flask import request, jsonify
 
 pending_ops = []
+
+threading.Thread(
+    target=start_sim,
+    args=(app, emit, pending_ops, metrics, EXPERIMENT),
+    daemon=True
+).start()
 
 # ---------------- CORE ----------------
 
